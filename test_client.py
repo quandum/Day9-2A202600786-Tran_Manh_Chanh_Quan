@@ -61,7 +61,11 @@ async def main() -> None:
         )
 
         print("Sending request (this may take 30-60s while agents chain)...\n")
+        import time
+
+        start = time.perf_counter()
         response = await client.send_message(request)
+        latency = time.perf_counter() - start
 
         # Parse response
         result_text = ""
@@ -91,6 +95,8 @@ async def main() -> None:
         else:
             print("No text response received. Raw response:")
             print(response)
+
+        print(f"\n[Latency] Total end-to-end response time: {latency:.2f} seconds")
 
 
 if __name__ == "__main__":
