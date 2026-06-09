@@ -1,219 +1,447 @@
-# Legal Multi-Agent System with A2A Protocol
+# Codelab: Xây Dựng Hệ Thống Multi-Agent với A2A Protocol
 
-A distributed legal advisory system where specialised AI agents collaborate using Google's [Agent-to-Agent (A2A) protocol](https://github.com/google/A2A). Built with **LangGraph**, **LangChain**, and the **a2a-sdk**, the project serves as both a working demo and a hands-on learning path — progressing from a simple LLM API call (Stage 1) to a fully distributed multi-agent network (Stage 5).
+**Thời gian:** 2 giờ
+**Ngôn ngữ:** Python 3.11+
+**Công nghệ:** LangGraph, LangChain, A2A SDK
 
-## Architecture
+## Mục Tiêu Học Tập
 
+Sau khi hoàn thành codelab này, bạn sẽ:
+
+- Hiểu cách LLM hoạt động từ cơ bản đến nâng cao
+- Biết cách tích hợp tools và RAG vào LLM
+- Xây dựng được single agent với ReAct pattern
+- Tạo multi-agent system với LangGraph
+- Triển khai distributed agents với A2A protocol
+
+## Chuẩn Bị
+
+### Yêu Cầu Hệ Thống
+
+- Python 3.11 trở lên
+- [uv](https://docs.astral.sh/uv/) package manager
+- API key từ [OpenRouter](https://openrouter.ai)
+
+### Cài Đặt
+
+```bash
+# Clone repository
+git clone <repo-url>
+cd legal_multiagent
+
+# Cài đặt dependencies
+uv sync
+
+# Cấu hình environment
+cp .env.example .env
+# Sửa file .env, thêm OPENROUTER_API_KEY của bạn
 ```
-                     ┌─────────────────────┐
-                     │  Registry Service   │  :10000
-                     │  /register          │
-                     │  /discover/{task}   │
-                     └─────────┬───────────┘
-                               │  (agents self-register on startup)
-          ┌────────────────────┼─────────────────────┐
-          │                    │                     │
-   Tax Agent :10102   Law Agent :10101    Compliance Agent :10103
-          │                    │                     │
-          └─────────► delegates in parallel ◄────────┘
-                               │
-                        Customer Agent :10100
-                               │
-                             User
-```
-
-**Customer Agent** receives a user question and delegates to the **Law Agent**, which analyses the legal aspects, then dispatches to **Tax Agent** and **Compliance Agent** in parallel via LangGraph's `Send` API. Results are aggregated into a comprehensive legal analysis.
-
-All agent discovery is dynamic — agents register their capabilities with the **Registry** on startup and discover each other at runtime. No hardcoded URLs.
-
-### Agent Details
-
-| Agent | Port | LangGraph Pattern | Role |
-|---|---|---|---|
-| Customer Agent | 10100 | `create_react_agent` | Entry point — routes user questions to Law Agent |
-| Law Agent | 10101 | Custom `StateGraph` | Orchestrator — analyses law, delegates in parallel |
-| Tax Agent | 10102 | `create_react_agent` | Specialist — tax law, IRS, penalties, FBAR/FATCA |
-| Compliance Agent | 10103 | `create_react_agent` | Specialist — SEC, SOX, FCPA, GDPR, AML |
-| Registry | 10000 | FastAPI (not an agent) | Service discovery and agent registration |
-
-### Request Flow
-
-```
-User question
-  → Customer Agent: LLM detects legal domain, calls delegate tool
-    → Registry: discover("legal_question") → Law Agent endpoint
-    → Law Agent:
-        [analyze_law]      LLM contract/tort analysis
-        [check_routing]    LLM decides: needs_tax? needs_compliance?
-        [call_tax]         ──→ Registry discover → Tax Agent (A2A)     ┐
-        [call_compliance]  ──→ Registry discover → Compliance (A2A)    ├ parallel
-        [aggregate]        Combines all analyses into final response   ┘
-  → Customer Agent returns response to user
-```
-
-### Key Design Patterns
-
-- **Dynamic discovery** — agents find each other through the Registry, not hardcoded URLs
-- **Parallel delegation** — LangGraph `Send` API dispatches tax and compliance branches concurrently
-- **Trace propagation** — `trace_id` and `context_id` flow through every A2A hop for debugging
-- **Depth guards** — `MAX_DELEGATION_DEPTH = 3` prevents infinite delegation loops
-- **Annotated reducers** — `Annotated[str, _last_wins]` handles parallel writes to shared state fields
-
-## Tech Stack
-
-| Layer | Choice |
-|---|---|
-| Agent framework | [LangGraph](https://langchain-ai.github.io/langgraph/) |
-| LLM provider | Any model via [OpenRouter](https://openrouter.ai) (OpenAI-compatible API) |
-| A2A transport | [a2a-sdk](https://pypi.org/project/a2a-sdk/) |
-| Registry | FastAPI + in-memory store |
-| Package manager | [uv](https://docs.astral.sh/uv/) |
-
-## 📚 Codelab for Students
-
-**Thời gian:** 2 giờ | **Ngôn ngữ:** Tiếng Việt
-
-Codelab hướng dẫn từng bước xây dựng multi-agent system, từ cơ bản đến nâng cao:
-
-- **[CODELAB.md](CODELAB.md)** - Hướng dẫn chi tiết cho sinh viên
-- **[INSTRUCTOR_GUIDE.md](INSTRUCTOR_GUIDE.md)** - Hướng dẫn cho giảng viên
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Tài liệu tham khảo nhanh
-- **[exercises/](exercises/)** - Bài tập thực hành với skeleton code
-- **[exercises/SOLUTIONS.md](exercises/SOLUTIONS.md)** - Đáp án chi tiết
-
-### Lộ Trình Học
-
-```
-Stage 1: Direct LLM (20 phút)
-    ↓
-Stage 2: RAG + Tools (30 phút)
-    ↓
-Stage 3: ReAct Agent (25 phút)
-    ↓
-Stage 4: Multi-Agent (30 phút)
-    ↓
-Stage 5: Distributed A2A (30 phút)
-    ↓
-Tổng kết & Q&A (15 phút)
-```
-
-**Bắt đầu:** Đọc [CODELAB.md](CODELAB.md)
 
 ---
 
-## Getting Started
+## Phần 1: Direct LLM Calling (20 phút)
 
-### Prerequisites
+### Lý Thuyết
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
-- An [OpenRouter](https://openrouter.ai) API key
+LLM (Large Language Model) ở dạng cơ bản nhất là một API nhận input text và trả về output text. Không có memory, không có tools, chỉ dựa vào training data.
 
-### Setup
+**Ưu điểm:**
 
-```bash
-# Clone and install
-git clone <repo-url>
-cd legal_multiagent
-uv sync
+- Đơn giản, dễ implement
+- Phản hồi nhanh
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your OpenRouter API key
-```
+**Nhược điểm:**
 
-### Run the Full System (Stage 5)
+- Không có kiến thức real-time
+- Không thể tra cứu database
+- Không có context giữa các lần gọi
 
-```bash
-# Start all 5 services (registry + 4 agents)
-./start_all.sh
+### Thực Hành
 
-# In another terminal, send a test question
-uv run python test_client.py
-```
-
-### Run Individual Stage Demos
-
-No servers needed — each demo runs as a standalone script:
+**Bước 1:** Chạy demo Stage 1
 
 ```bash
 uv run python stages/stage_1_direct_llm/main.py
+```
+
+**Bước 2:** Đọc và hiểu code
+
+Mở file `stages/stage_1_direct_llm/main.py` và trả lời:
+
+1. LLM được khởi tạo như thế nào? (Tìm hàm `get_llm()`)
+2. Message được gửi đến LLM có cấu trúc gì?
+3. Tại sao cần có `SystemMessage` và `HumanMessage`?
+
+**Bài Tập 1.1:** Thay đổi câu hỏi
+
+Sửa biến `QUESTION` thành câu hỏi pháp lý khác (tiếng Việt hoặc tiếng Anh) và chạy lại.
+
+**Bài Tập 1.2:** Thêm temperature control
+
+Thêm parameter `temperature=0.3` vào hàm `get_llm()` trong `common/llm.py` để làm output ổn định hơn.
+
+---
+
+## Phần 2: LLM + RAG & Tools (30 phút)
+
+### Lý Thuyết
+
+**RAG (Retrieval-Augmented Generation):** Cho phép LLM tra cứu knowledge base trước khi trả lời.
+
+**Tools:** Các function mà LLM có thể gọi để thực hiện tác vụ cụ thể (tính toán, query database, gọi API).
+
+**Function Calling Flow:**
+
+1. LLM nhận câu hỏi + danh sách tools
+2. LLM quyết định gọi tool nào (hoặc không gọi)
+3. Tool được execute, trả về kết quả
+4. LLM nhận kết quả và tạo câu trả lời cuối cùng
+
+### Thực Hành
+
+**Bước 1:** Chạy demo Stage 2
+
+```bash
 uv run python stages/stage_2_rag_tools/main.py
+```
+
+**Bước 2:** Phân tích code
+
+Mở `stages/stage_2_rag_tools/main.py` và tìm:
+
+1. Hàm `@tool` decorator được dùng ở đâu?
+2. `LEGAL_KNOWLEDGE` được cấu trúc như thế nào?
+3. LLM được bind với tools ra sao? (Tìm `.bind_tools()`)
+
+**Bài Tập 2.1:** Thêm knowledge base entry
+
+Thêm một entry mới vào `LEGAL_KNOWLEDGE` về luật lao động:
+
+```python
+{
+    "id": "labor_law",
+    "keywords": ["lao động", "sa thải", "hợp đồng lao động", "labor", "termination"],
+    "text": (
+        "Theo Bộ luật Lao động Việt Nam 2019, người sử dụng lao động có thể "
+        "đơn phương chấm dứt hợp đồng trong các trường hợp: (1) người lao động "
+        "thường xuyên không hoàn thành công việc; (2) bị ốm đau, tai nạn đã điều trị "
+        "12 tháng chưa khỏi; (3) thiên tai, hỏa hoạn; (4) người lao động đủ tuổi nghỉ hưu."
+    ),
+}
+```
+
+**Bài Tập 2.2:** Tạo tool mới
+
+Tạo một tool `@tool` mới tên `check_statute_of_limitations` nhận vào `case_type` (string) và trả về thời hiệu khởi kiện:
+
+```python
+@tool
+def check_statute_of_limitations(case_type: str) -> str:
+    """Kiểm tra thời hiệu khởi kiện theo loại vụ án.
+  
+    Args:
+        case_type: Loại vụ án (contract, tort, property)
+    """
+    limits = {
+        "contract": "4 năm (UCC § 2-725)",
+        "tort": "2-3 năm tùy bang",
+        "property": "5 năm",
+    }
+    return limits.get(case_type.lower(), "Không xác định")
+```
+
+Thêm tool này vào danh sách tools và test.
+
+---
+
+## Phần 3: Single Agent với ReAct (25 phút)
+
+### Lý Thuyết
+
+**ReAct Pattern:** Reasoning + Acting
+
+Agent tự động lặp lại chu trình:
+
+1. **Think:** Suy nghĩ cần làm gì
+2. **Act:** Gọi tool
+3. **Observe:** Nhận kết quả
+4. Lặp lại cho đến khi có câu trả lời cuối cùng
+
+LangGraph cung cấp `create_react_agent` để tự động hóa pattern này.
+
+### Thực Hành
+
+**Bước 1:** Chạy demo Stage 3
+
+```bash
 uv run python stages/stage_3_single_agent/main.py
-uv run python stages/stage_4_multi_agent/main.py
 ```
 
-## LLM Evolution Stages
+**Bước 2:** Quan sát output
 
-The `stages/` folder contains progressive demos that build from simple to complex, matching the roadmap in `docs/10_llm_roadmap.svg`:
+Chú ý cách agent tự động:
 
-| Stage | Name | What It Demonstrates |
-|---|---|---|
-| **1** | Direct LLM Calling | Stateless prompt → response. No tools, no memory. |
-| **2** | LLM + RAG / Tools | Tool calling with a keyword-match knowledge base and damage calculator. Manual single-pass orchestration. |
-| **3** | Single Agent (ReAct) | Autonomous Think → Act → Observe loop via `create_react_agent`. Agent decides which tools to call and when. |
-| **4** | Multi-Agent (In-Process) | Multiple specialised agents with parallel execution via `StateGraph` + `Send` API. Same topology as Stage 5 but in a single process. |
-| **5** | Distributed A2A (This Project) | Full distributed system — each agent is an independent HTTP service communicating via A2A protocol with dynamic discovery. |
+- Quyết định tool nào cần gọi
+- Gọi nhiều tools liên tiếp
+- Tổng hợp kết quả
 
-Each stage's folder includes an `architecture.svg` diagram and a self-contained `main.py`.
+**Bước 3:** Đọc code
 
-## Project Structure
+Mở `stages/stage_3_single_agent/main.py`:
 
-```
-legal_multiagent/
-├── start_all.sh               # Launches all services in correct order
-├── test_client.py             # E2E test client
-├── pyproject.toml             # Dependencies (uv-managed)
-├── .env.example               # Required environment variables
-│
-├── common/                    # Shared utilities
-│   ├── llm.py                 # get_llm() → ChatOpenAI via OpenRouter
-│   ├── a2a_client.py          # delegate() — A2A message sending
-│   └── registry_client.py     # discover() / register() — Registry API
-│
-├── registry/                  # Service discovery (port 10000)
-├── customer_agent/            # Entry point agent (port 10100)
-├── law_agent/                 # Legal orchestrator (port 10101)
-├── tax_agent/                 # Tax specialist (port 10102)
-├── compliance_agent/          # Compliance specialist (port 10103)
-│
-├── stages/                    # Progressive learning demos (1-4)
-│   ├── stage_1_direct_llm/
-│   ├── stage_2_rag_tools/
-│   ├── stage_3_single_agent/
-│   └── stage_4_multi_agent/
-│
-└── docs/                      # Architecture diagrams (SVG)
+1. Tìm `create_react_agent()` — đây là magic function
+2. So sánh với Stage 2: không còn manual tool loop
+3. Xem `agent_executor.invoke()` — chỉ cần gọi một lần
+
+**Bài Tập 3.1:** Thêm tool tra cứu án lệ
+
+```python
+@tool
+def search_case_law(keywords: str) -> str:
+    """Tìm kiếm án lệ theo từ khóa.
+  
+    Args:
+        keywords: Từ khóa tìm kiếm
+    """
+    cases = {
+        "breach": "Hadley v. Baxendale (1854) - Consequential damages",
+        "negligence": "Donoghue v. Stevenson (1932) - Duty of care",
+        "contract": "Carlill v. Carbolic Smoke Ball Co (1893) - Unilateral contract",
+    }
+    for key, case in cases.items():
+        if key in keywords.lower():
+            return case
+    return "Không tìm thấy án lệ phù hợp"
 ```
 
-Each agent module follows the same structure:
-- **`graph.py`** — LangGraph graph definition (all agent logic)
-- **`agent_executor.py`** — Bridge between A2A SDK and LangGraph
-- **`__main__.py`** — Server bootstrap, agent card, registration
+Thêm vào tools list và test với câu hỏi về breach of contract.
 
-## Configuration
+**Bài Tập 3.2:** Debug agent reasoning
 
-| Environment Variable | Description | Default |
-|---|---|---|
-| `OPENROUTER_API_KEY` | Your OpenRouter API key | (required) |
-| `OPENROUTER_MODEL` | Model identifier | `anthropic/claude-sonnet-4-5` |
-| `REGISTRY_URL` | Registry service URL | `http://localhost:10000` |
+Thêm `verbose=True` vào `create_react_agent()` để xem chi tiết quá trình suy nghĩ của agent.
 
-The model is swappable to any OpenRouter-supported model (e.g., `openai/gpt-4o`, `google/gemini-2.0-flash`).
+---
 
-## Documentation Diagrams
+## Phần 4: Multi-Agent In-Process (30 phút)
 
-The `docs/` folder contains SVG architecture diagrams:
+### Lý Thuyết
 
-| Diagram | Topic |
-|---|---|
-| `01_why_multiagent` | Why multi-agent over monolithic LLMs |
-| `02_a2a_vs_traditional` | A2A protocol vs traditional multi-agent |
-| `03_a2a_protocol` | A2A protocol technical details |
-| `04_system_architecture` | Full system architecture |
-| `05_law_agent_graph` | Law Agent StateGraph deep dive |
-| `06_request_flow` | End-to-end request flow with trace propagation |
-| `07_a2a_intro` | Introduction to A2A protocol |
-| `08_a2a_core_concepts` | A2A core concepts (Agent Cards, Tasks, Parts) |
-| `09_a2a_interaction_flow` | A2A interaction flow patterns |
-| `10_llm_roadmap` | LLM evolution roadmap (Stages 1–5) |
+**Multi-Agent System:** Nhiều agents chuyên môn hóa cùng làm việc.
+
+**Ưu điểm:**
+
+- Mỗi agent tập trung vào domain riêng
+- Có thể chạy song song (parallel execution)
+- Dễ maintain và mở rộng
+
+**LangGraph StateGraph:**
+
+- Định nghĩa state (dữ liệu chia sẻ giữa các nodes)
+- Tạo nodes (các bước xử lý)
+- Định nghĩa edges (luồng điều khiển)
+
+**Send API:** Cho phép dispatch nhiều tasks song song.
+
+### Thực Hành
+
+**Bước 1:** Chạy demo Stage 4
+
+```bash
+uv run python stages/stage_4_milti_agent/main.py
+```
+
+**Bước 2:** Phân tích kiến trúc
+
+Mở `stages/stage_4_milti_agent/main.py`:
+
+1. Tìm `class State(TypedDict)` — đây là shared state
+2. Tìm các agent functions: `law_agent`, `tax_agent`, `compliance_agent`
+3. Tìm `Send()` API — dispatch parallel tasks
+4. Xem `graph.add_node()` và `graph.add_edge()`
+
+**Bước 3:** Vẽ graph
+
+```python
+# Thêm vào cuối file main.py
+from IPython.display import Image, display
+display(Image(graph.get_graph().draw_mermaid_png()))
+```
+
+**Bài Tập 4.1:** Thêm agent mới
+
+Tạo `privacy_agent` chuyên về GDPR và privacy law:
+
+```python
+def privacy_agent(state: State) -> dict:
+    """Agent chuyên về luật bảo vệ dữ liệu cá nhân."""
+    llm = get_llm()
+  
+    prompt = f"""Bạn là chuyên gia về GDPR và luật bảo vệ dữ liệu cá nhân.
+  
+Câu hỏi gốc: {state['question']}
+Phân tích pháp lý: {state.get('law_analysis', 'N/A')}
+
+Hãy phân tích các vấn đề về privacy và GDPR (nếu có).
+"""
+  
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return {"privacy_analysis": response.content}
+```
+
+Thêm node này vào graph và kết nối với `aggregate_results`.
+
+**Bài Tập 4.2:** Implement conditional routing
+
+Sửa `check_routing` để chỉ gọi privacy_agent khi câu hỏi có từ khóa "data", "privacy", "gdpr":
+
+```python
+def check_routing(state: State) -> list[Send]:
+    question_lower = state["question"].lower()
+    tasks = []
+  
+    if any(kw in question_lower for kw in ["tax", "irs", "thuế"]):
+        tasks.append(Send("tax_agent", state))
+  
+    if any(kw in question_lower for kw in ["compliance", "sec", "regulation"]):
+        tasks.append(Send("compliance_agent", state))
+  
+    if any(kw in question_lower for kw in ["data", "privacy", "gdpr", "dữ liệu"]):
+        tasks.append(Send("privacy_agent", state))
+  
+    return tasks if tasks else [Send("aggregate_results", state)]
+```
+
+---
+
+## Phần 5: Distributed A2A System (15 phút)
+
+### Lý Thuyết
+
+**A2A (Agent-to-Agent) Protocol:** Chuẩn giao tiếp giữa các agents qua HTTP.
+
+**Khác biệt với Stage 4:**
+
+- Mỗi agent là một service độc lập
+- Giao tiếp qua HTTP thay vì in-process
+- Dynamic discovery qua Registry
+- Có thể scale từng agent riêng biệt
+
+**Kiến trúc:**
+
+```
+Registry (10000) ← agents register on startup
+    ↓
+Customer Agent (10100) → Law Agent (10101)
+                              ↓
+                    ┌─────────┴─────────┐
+                    ↓                   ↓
+            Tax Agent (10102)   Compliance Agent (10103)
+```
+
+### Thực Hành
+
+**Bước 1:** Khởi động toàn bộ hệ thống
+
+```bash
+./start_all.sh
+```
+
+Chờ ~10 giây để tất cả services khởi động.
+
+**Bước 2:** Test hệ thống
+
+```bash
+uv run python test_client.py
+```
+
+**Bước 3:** Quan sát logs
+
+Mở 5 terminal tabs và xem logs của từng service:
+
+- Registry: port 10000
+- Customer Agent: port 10100
+- Law Agent: port 10101
+- Tax Agent: port 10102
+- Compliance Agent: port 10103
+
+**Bài Tập 5.1:** Trace request flow
+
+Trong logs, tìm `trace_id` và theo dõi request đi qua các agents. Vẽ sequence diagram.
+
+**Bài Tập 5.2:** Test dynamic discovery
+
+1. Dừng Tax Agent (Ctrl+C)
+2. Chạy lại `test_client.py`
+3. Quan sát lỗi và cách hệ thống xử lý
+
+**Bài Tập 5.3:** Modify agent behavior
+
+Sửa `tax_agent/graph.py`, thay đổi system prompt để agent trả lời ngắn gọn hơn. Restart tax agent và test lại.
+
+---
+
+## Phần 6: Tổng Kết & Mở Rộng (10 phút)
+
+### So Sánh 5 Stages
+
+| Stage | Pattern         | Use Case                                 | Complexity |
+| ----- | --------------- | ---------------------------------------- | ---------- |
+| 1     | Direct LLM      | Câu hỏi đơn giản, không cần tools | ⭐         |
+| 2     | LLM + Tools     | Cần tra cứu data hoặc tính toán     | ⭐⭐       |
+| 3     | ReAct Agent     | Tự động orchestration, multi-step     | ⭐⭐⭐     |
+| 4     | Multi-Agent     | Nhiều domains, parallel processing      | ⭐⭐⭐⭐   |
+| 5     | Distributed A2A | Production, scalable, fault-tolerant     | ⭐⭐⭐⭐⭐ |
+
+### Câu Hỏi Ôn Tập
+
+1. Khi nào nên dùng single agent thay vì multi-agent?
+2. Ưu điểm của A2A protocol so với gRPC hoặc REST thông thường?
+3. Làm thế nào để prevent infinite delegation loops trong A2A?
+4. Tại sao cần Registry service? Có thể hardcode URLs không?
+
+### Bài Tập Nâng Cao (Tự Học)
+
+**Challenge 1:** Thêm memory/conversation history
+
+Implement conversation memory để agent nhớ các câu hỏi trước đó.
+
+**Challenge 2:** Add authentication
+
+Thêm API key authentication cho các A2A endpoints.
+
+**Challenge 3:** Implement retry logic
+
+Khi một agent fail, tự động retry với exponential backoff.
+
+**Challenge 4:** Monitoring & Observability
+
+Tích hợp LangSmith hoặc Prometheus để monitor agent performance.
+
+---
+
+## Tài Liệu Tham Khảo
+
+- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
+- [A2A Protocol Spec](https://github.com/google/A2A)
+- [OpenRouter API](https://openrouter.ai/docs)
+- Architecture diagrams: `docs/*.svg`
+
+## Hỗ Trợ
+
+Nếu gặp vấn đề:
+
+1. Check `.env` file có đúng API key không
+2. Đảm bảo tất cả ports (10000-10103) không bị chiếm
+3. Xem logs trong terminal để debug
+4. Đọc error messages cẩn thận — thường có hint rõ ràng
+
+---
+
+## **Bài Tập Cộng Điểm:**
+
+Sau khi chạy full Stage 5 (test_client.py) trả lời 2 câu hỏi:
+
+- Latency (Tổng thời gian trả lời 1 câu hỏi của hệ thống) là bao nhiêu giây?
+- Đề xuất phương án giảm latency và demo + show thời gian xử lý đã giảm được khi apply phương án?
+
+**Chúc các bạn học tốt! 🚀**
