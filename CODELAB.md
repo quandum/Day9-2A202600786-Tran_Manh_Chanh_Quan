@@ -1,12 +1,13 @@
 # Codelab: Xây Dựng Hệ Thống Multi-Agent với A2A Protocol
 
-**Thời gian:** 2 giờ  
-**Ngôn ngữ:** Python 3.11+  
+**Thời gian:** 2 giờ
+**Ngôn ngữ:** Python 3.11+
 **Công nghệ:** LangGraph, LangChain, A2A SDK
 
 ## Mục Tiêu Học Tập
 
 Sau khi hoàn thành codelab này, bạn sẽ:
+
 - Hiểu cách LLM hoạt động từ cơ bản đến nâng cao
 - Biết cách tích hợp tools và RAG vào LLM
 - Xây dựng được single agent với ReAct pattern
@@ -16,6 +17,7 @@ Sau khi hoàn thành codelab này, bạn sẽ:
 ## Chuẩn Bị
 
 ### Yêu Cầu Hệ Thống
+
 - Python 3.11 trở lên
 - [uv](https://docs.astral.sh/uv/) package manager
 - API key từ [OpenRouter](https://openrouter.ai)
@@ -44,10 +46,12 @@ cp .env.example .env
 LLM (Large Language Model) ở dạng cơ bản nhất là một API nhận input text và trả về output text. Không có memory, không có tools, chỉ dựa vào training data.
 
 **Ưu điểm:**
+
 - Đơn giản, dễ implement
 - Phản hồi nhanh
 
 **Nhược điểm:**
+
 - Không có kiến thức real-time
 - Không thể tra cứu database
 - Không có context giữa các lần gọi
@@ -87,6 +91,7 @@ Thêm parameter `temperature=0.3` vào hàm `get_llm()` trong `common/llm.py` đ
 **Tools:** Các function mà LLM có thể gọi để thực hiện tác vụ cụ thể (tính toán, query database, gọi API).
 
 **Function Calling Flow:**
+
 1. LLM nhận câu hỏi + danh sách tools
 2. LLM quyết định gọi tool nào (hoặc không gọi)
 3. Tool được execute, trả về kết quả
@@ -133,7 +138,7 @@ Tạo một tool `@tool` mới tên `check_statute_of_limitations` nhận vào `
 @tool
 def check_statute_of_limitations(case_type: str) -> str:
     """Kiểm tra thời hiệu khởi kiện theo loại vụ án.
-    
+  
     Args:
         case_type: Loại vụ án (contract, tort, property)
     """
@@ -156,6 +161,7 @@ Thêm tool này vào danh sách tools và test.
 **ReAct Pattern:** Reasoning + Acting
 
 Agent tự động lặp lại chu trình:
+
 1. **Think:** Suy nghĩ cần làm gì
 2. **Act:** Gọi tool
 3. **Observe:** Nhận kết quả
@@ -174,6 +180,7 @@ uv run python stages/stage_3_single_agent/main.py
 **Bước 2:** Quan sát output
 
 Chú ý cách agent tự động:
+
 - Quyết định tool nào cần gọi
 - Gọi nhiều tools liên tiếp
 - Tổng hợp kết quả
@@ -192,7 +199,7 @@ Mở `stages/stage_3_single_agent/main.py`:
 @tool
 def search_case_law(keywords: str) -> str:
     """Tìm kiếm án lệ theo từ khóa.
-    
+  
     Args:
         keywords: Từ khóa tìm kiếm
     """
@@ -222,11 +229,13 @@ Thêm `verbose=True` vào `create_react_agent()` để xem chi tiết quá trìn
 **Multi-Agent System:** Nhiều agents chuyên môn hóa cùng làm việc.
 
 **Ưu điểm:**
+
 - Mỗi agent tập trung vào domain riêng
 - Có thể chạy song song (parallel execution)
 - Dễ maintain và mở rộng
 
 **LangGraph StateGraph:**
+
 - Định nghĩa state (dữ liệu chia sẻ giữa các nodes)
 - Tạo nodes (các bước xử lý)
 - Định nghĩa edges (luồng điều khiển)
@@ -266,15 +275,15 @@ Tạo `privacy_agent` chuyên về GDPR và privacy law:
 def privacy_agent(state: State) -> dict:
     """Agent chuyên về luật bảo vệ dữ liệu cá nhân."""
     llm = get_llm()
-    
+  
     prompt = f"""Bạn là chuyên gia về GDPR và luật bảo vệ dữ liệu cá nhân.
-    
+  
 Câu hỏi gốc: {state['question']}
 Phân tích pháp lý: {state.get('law_analysis', 'N/A')}
 
 Hãy phân tích các vấn đề về privacy và GDPR (nếu có).
 """
-    
+  
     response = llm.invoke([HumanMessage(content=prompt)])
     return {"privacy_analysis": response.content}
 ```
@@ -289,16 +298,16 @@ Sửa `check_routing` để chỉ gọi privacy_agent khi câu hỏi có từ kh
 def check_routing(state: State) -> list[Send]:
     question_lower = state["question"].lower()
     tasks = []
-    
+  
     if any(kw in question_lower for kw in ["tax", "irs", "thuế"]):
         tasks.append(Send("tax_agent", state))
-    
+  
     if any(kw in question_lower for kw in ["compliance", "sec", "regulation"]):
         tasks.append(Send("compliance_agent", state))
-    
+  
     if any(kw in question_lower for kw in ["data", "privacy", "gdpr", "dữ liệu"]):
         tasks.append(Send("privacy_agent", state))
-    
+  
     return tasks if tasks else [Send("aggregate_results", state)]
 ```
 
@@ -311,12 +320,14 @@ def check_routing(state: State) -> list[Send]:
 **A2A (Agent-to-Agent) Protocol:** Chuẩn giao tiếp giữa các agents qua HTTP.
 
 **Khác biệt với Stage 4:**
+
 - Mỗi agent là một service độc lập
 - Giao tiếp qua HTTP thay vì in-process
 - Dynamic discovery qua Registry
 - Có thể scale từng agent riêng biệt
 
 **Kiến trúc:**
+
 ```
 Registry (10000) ← agents register on startup
     ↓
@@ -346,6 +357,7 @@ uv run python test_client.py
 **Bước 3:** Quan sát logs
 
 Mở 5 terminal tabs và xem logs của từng service:
+
 - Registry: port 10000
 - Customer Agent: port 10100
 - Law Agent: port 10101
@@ -372,13 +384,13 @@ Sửa `tax_agent/graph.py`, thay đổi system prompt để agent trả lời ng
 
 ### So Sánh 5 Stages
 
-| Stage | Pattern | Use Case | Complexity |
-|---|---|---|---|
-| 1 | Direct LLM | Câu hỏi đơn giản, không cần tools | ⭐ |
-| 2 | LLM + Tools | Cần tra cứu data hoặc tính toán | ⭐⭐ |
-| 3 | ReAct Agent | Tự động orchestration, multi-step | ⭐⭐⭐ |
-| 4 | Multi-Agent | Nhiều domains, parallel processing | ⭐⭐⭐⭐ |
-| 5 | Distributed A2A | Production, scalable, fault-tolerant | ⭐⭐⭐⭐⭐ |
+| Stage | Pattern         | Use Case                                 | Complexity |
+| ----- | --------------- | ---------------------------------------- | ---------- |
+| 1     | Direct LLM      | Câu hỏi đơn giản, không cần tools | ⭐         |
+| 2     | LLM + Tools     | Cần tra cứu data hoặc tính toán     | ⭐⭐       |
+| 3     | ReAct Agent     | Tự động orchestration, multi-step     | ⭐⭐⭐     |
+| 4     | Multi-Agent     | Nhiều domains, parallel processing      | ⭐⭐⭐⭐   |
+| 5     | Distributed A2A | Production, scalable, fault-tolerant     | ⭐⭐⭐⭐⭐ |
 
 ### Câu Hỏi Ôn Tập
 
@@ -417,6 +429,7 @@ Tích hợp LangSmith hoặc Prometheus để monitor agent performance.
 ## Hỗ Trợ
 
 Nếu gặp vấn đề:
+
 1. Check `.env` file có đúng API key không
 2. Đảm bảo tất cả ports (10000-10103) không bị chiếm
 3. Xem logs trong terminal để debug
@@ -425,7 +438,9 @@ Nếu gặp vấn đề:
 ---
 
 ## **Bài Tập Cộng Điểm:**
+
 Sau khi chạy full Stage 5 (test_client.py) trả lời 2 câu hỏi:
+
 - Latency (Tổng thời gian trả lời 1 câu hỏi của hệ thống) là bao nhiêu giây?
 - Đề xuất phương án giảm latency và demo + show thời gian xử lý đã giảm được khi apply phương án?
 
