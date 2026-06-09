@@ -546,7 +546,7 @@ Sau khi chạy full Stage 5 (test_client.py) trả lời 2 câu hỏi:
 
 > **Trả lời:**
 >
-> **1. Đo latency:** `test_client.py` đã được bổ sung đo thời gian end-to-end (dùng `time.perf_counter()` bao quanh `client.send_message`) và in dòng `[Latency] Total end-to-end response time: X.XX seconds`. Chạy `uv run python test_client.py` để lấy con số thực tế trên máy của bạn (điền vào đây). Với câu hỏi mẫu (luật + thuế + compliance) latency thường rơi vào khoảng **~20–60 giây**, do chuỗi gọi LLM tuần tự: Customer → Law (`analyze_law` + `check_routing` + `aggregate`) cộng với Tax + Compliance chạy song song, mỗi node là một lần gọi LLM qua mạng tới OpenRouter.
+> **1. Đo latency:** `test_client.py` đã được bổ sung đo thời gian end-to-end (dùng `time.perf_counter()` bao quanh `client.send_message`) và in dòng `[Latency] Total end-to-end response time: X.XX seconds`. **Kết quả đo thực tế với model `google/gemma-4-31b-it:free`: `153.18 giây`** cho câu hỏi mẫu (luật + thuế + compliance). Latency cao như vậy chủ yếu do: (a) chuỗi gọi LLM tuần tự Customer → Law (`analyze_law` + `check_routing` + `aggregate`) cộng dồn; (b) Tax + Compliance tuy chạy *song song* nhưng mỗi nhánh là một ReAct agent nhiều bước; (c) model **free bị rate-limit (HTTP 429 Too Many Requests)** nên client tự retry, cộng thêm thời gian chờ. Nếu dùng model trả phí/nhanh hơn, latency sẽ giảm mạnh.
 >
 > **Phân tích nguồn latency:** Phần lớn thời gian là **độ trễ inference của LLM**, không phải HTTP overhead. Các node *tuần tự* (analyze_law → check_routing → ... → aggregate) cộng dồn; các specialist đã chạy *song song* nên không cộng dồn.
 >
@@ -560,6 +560,31 @@ Sau khi chạy full Stage 5 (test_client.py) trả lời 2 câu hỏi:
 > | **Giảm token** | Rút gọn system prompt + giới hạn `max_tokens` cho specialist | Giảm thời gian sinh token |
 > | **Đảm bảo parallel thực sự** | Kiểm tra Tax + Compliance chạy đồng thời qua `Send` (đã có) | Tránh cộng dồn tuần tự |
 >
-> **Demo so sánh:** Chạy `test_client.py` lần 1 ghi lại con số `[Latency]` (baseline). Sau đó áp dụng 1 phương án (ví dụ đổi `check_routing` sang keyword-matching, hoặc đổi sang model haiku qua biến môi trường `OPENROUTER_MODEL`), restart các service và chạy lại `test_client.py`, ghi lại con số mới. Trình bày bảng *Before → After* (ví dụ `45.0s → 28.0s`, giảm ~38%) làm bằng chứng.
+> **Demo so sánh (đã triển khai):** Phương án **"bỏ node LLM thừa"** đã được code thật trong [law_agent/graph.py](law_agent/graph.py). Hàm `check_routing` giờ đọc biến môi trường `ROUTING_MODE`:
+> - `ROUTING_MODE=llm` (baseline): gọi thêm **1 lần LLM** để hỏi nên route tới Tax/Compliance hay không.
+> - `ROUTING_MODE=keyword` (tối ưu): quyết định routing bằng **keyword-matching thuần Python**, *không gọi LLM* → loại bỏ hẳn 1 round-trip LLM trên đường tuần tự.
+>
+> Cách chạy demo:
+> ```powershell
+> # Baseline
+> $env:ROUTING_MODE="llm"; uv run python -m law_agent   # (cùng registry + tax + compliance + customer)
+> uv run python test_client.py                          # đọc dòng [Latency]
+>
+> # Tối ưu
+> $env:ROUTING_MODE="keyword"; uv run python -m law_agent
+> uv run python test_client.py                          # đọc dòng [Latency] mới
+> ```
+>
+> **Kết quả đo & ghi chú trung thực:**
+>
+> | Lần chạy | Chế độ routing | Latency đo được | Trạng thái |
+> |----------|---------------|-----------------|------------|
+> | Run sạch ban đầu | `llm` | **153.18 s** | ✅ Thành công (đầy đủ tax + compliance) |
+> | Re-test (cùng phiên) | `llm` | 95.05 s | ⚠️ Kết thúc bằng HTTP 429 (đã chạm hạn mức ngày) |
+> | Re-test (cùng phiên) | `keyword` | 4.57 s | ⚠️ Fail-fast tại LLM call đầu của Customer (HTTP 429) |
+>
+> **Vì sao chưa có phép đo "thành công" sạch cho `keyword`:** API key model free `google/gemma-4-31b-it:free` có hạn mức **50 requests/ngày**, và trong lúc đo lại đã **cạn quota** (`X-RateLimit-Remaining: 0`, lỗi `429 Rate limit exceeded: free-models-per-day`). Khi quota đã hết, mọi request đều fail nên hai con số 95.05s/4.57s **không phản ánh hiệu năng thật** — chúng chỉ cho thấy mỗi đường đi chạm "bức tường rate-limit" nhanh hay chậm.
+>
+> **Bằng chứng phân tích từ log run sạch (153.18s):** Riêng node `check_routing` ở chế độ `llm` tốn **~27 giây** cho 1 lần gọi LLM (đo từ timestamp giữa `analyze_law` xong → `check_routing` xong trong log Law Agent). Chế độ `keyword` loại bỏ hoàn toàn lần gọi này, nên **kỳ vọng giảm ~27s (~18%)** trên đường tuần tự, đồng thời **giảm 1 request lên model free → giảm rủi ro 429**. Để có bảng *Before → After* sạch, chạy lại đúng 2 lệnh trên **sau khi quota reset** (hoặc nạp 10 credits để mở 1000 req/ngày).
 
 **Chúc các bạn học tốt! 🚀**

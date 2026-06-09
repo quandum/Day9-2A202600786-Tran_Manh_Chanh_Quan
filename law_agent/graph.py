@@ -73,11 +73,38 @@ async def check_routing(state: LawState) -> dict:
 
     Returns updated state flags so the routing function can read them.
     If delegation depth is already at the max, skip further delegation.
+
+    Latency optimisation: when ROUTING_MODE=keyword (default), routing is
+    decided by fast keyword-matching instead of an extra LLM call, saving one
+    full round-trip to the model (and reducing the chance of rate-limiting).
+    Set ROUTING_MODE=llm to use the original LLM-based routing.
     """
     depth = state.get("delegation_depth", 0)
     if depth >= MAX_DELEGATION_DEPTH:
         logger.info("Max delegation depth reached (%d); skipping sub-agents", depth)
         return {"needs_tax": False, "needs_compliance": False}
+
+    import os
+
+    routing_mode = os.getenv("ROUTING_MODE", "keyword").lower()
+
+    if routing_mode == "keyword":
+        q = state["question"].lower()
+        tax_kw = ["tax", "irs", "thuế", "evasion", "fbar", "fatca", "revenue", "deduction"]
+        compliance_kw = [
+            "compliance", "sec", "sox", "sarbanes", "aml", "fcpa", "regulation",
+            "regulatory", "gdpr", "ccpa", "privacy", "data", "bribery", "tuân thủ",
+        ]
+        needs_tax = any(kw in q for kw in tax_kw)
+        needs_compliance = any(kw in q for kw in compliance_kw)
+        # If nothing matched, fall back to consulting both specialists.
+        if not needs_tax and not needs_compliance:
+            needs_tax = needs_compliance = True
+        logger.info(
+            "Routing decision (keyword): needs_tax=%s needs_compliance=%s",
+            needs_tax, needs_compliance,
+        )
+        return {"needs_tax": needs_tax, "needs_compliance": needs_compliance}
 
     llm = get_llm()
     messages = [
@@ -111,7 +138,7 @@ async def check_routing(state: LawState) -> dict:
 
     needs_tax = bool(parsed.get("needs_tax", True))
     needs_compliance = bool(parsed.get("needs_compliance", True))
-    logger.info("Routing decision: needs_tax=%s needs_compliance=%s", needs_tax, needs_compliance)
+    logger.info("Routing decision (llm): needs_tax=%s needs_compliance=%s", needs_tax, needs_compliance)
     return {"needs_tax": needs_tax, "needs_compliance": needs_compliance}
 
 
